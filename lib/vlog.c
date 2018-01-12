@@ -696,6 +696,8 @@ vlog_unixctl_close(struct unixctl_conn *conn, int argc OVS_UNUSED,
     if (log_fd >= 0) {
         close(log_fd);
         log_fd = -1;
+        free(log_file_name);
+        log_file_name = NULL;
 
         async_append_destroy(log_writer);
         log_writer = NULL;
