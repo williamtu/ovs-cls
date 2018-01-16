@@ -34,6 +34,8 @@
 
 #ifdef DPDK_NETDEV
 #include <rte_cycles.h>
+#include <rte_config.h>
+#include <rte_acl.h>
 #endif
 
 #include "bitmap.h"
@@ -215,6 +217,15 @@ static bool dpcls_lookup(struct dpcls *cls,
                          const struct netdev_flow_key keys[],
                          struct dpcls_rule **rules, size_t cnt,
                          int *num_lookups_p);
+static void acl_insert(struct dpcls *, struct dpcls_rule *rule,
+                       const struct netdev_flow_key *mask,
+                       odp_port_t in_port);
+static void acl_remove(struct dpcls *cls, struct dpcls_rule *rule);
+static int acl_lookup(struct dpcls *cls, const struct netdev_flow_key *mask);
+
+static inline struct dpcls_subtable *
+dpcls_find_subtable(struct dpcls *cls, const struct netdev_flow_key *mask);
+
 
 /* Set of supported meter flags */
 #define DP_SUPPORTED_METER_FLAGS_MASK \
@@ -1895,6 +1906,7 @@ dp_netdev_pmd_remove_flow(struct dp_netdev_pmd_thread *pmd,
     cls = dp_netdev_pmd_lookup_dpcls(pmd, in_port);
     ovs_assert(cls != NULL);
     dpcls_remove(cls, &flow->cr);
+    acl_remove(cls, &flow->cr);
     cmap_remove(&pmd->flow_table, node, dp_netdev_flow_hash(&flow->ufid));
     flow->dead = true;
 
@@ -2521,6 +2533,7 @@ dp_netdev_flow_add(struct dp_netdev_pmd_thread *pmd,
     /* Select dpcls for in_port. Relies on in_port to be exact match. */
     cls = dp_netdev_pmd_find_dpcls(pmd, in_port);
     dpcls_insert(cls, &flow->cr, &mask);
+    acl_insert(cls, &flow->cr, &mask, in_port);
 
     cmap_insert(&pmd->flow_table, CONST_CAST(struct cmap_node *, &flow->node),
                 dp_netdev_flow_hash(&flow->ufid));
@@ -5139,6 +5152,279 @@ handle_packet_upcall(struct dp_netdev_pmd_thread *pmd,
     }
 }
 
+static struct acl_cache {
+    pthread_t thread;
+    struct rte_acl_ctx *acl_ctx[2];
+    bool built[2];
+    atomic_uint8_t cur;     /* current in-use ctx. the other is to be built. */
+    struct seq *request;
+    //int states;           /* is building? */
+    uint16_t rules_offset;
+    struct dpcls_rule **rules;
+} *acl_cache;
+
+enum {
+    ACL_KEYFIELD_IN_PORT,
+    ACL_KEYFIELD_IP_SRC,
+    ACL_KEYFIELD_IP_DST,
+    //ACL_KEYFIELD_PORT_SRC,
+    //ACL_KEYFIELD_PORT_DST,
+    ACL_KEYFIELD_MAX
+};
+
+struct acl_search_key {
+    uint8_t in_port;
+    uint32_t ip_src;
+    uint32_t ip_dst;
+    //uint16_t prt_src;
+    //uint16_t prt_dst;
+} __attribute__((__packed__));
+
+static struct rte_acl_field_def rule_defs[ACL_KEYFIELD_MAX] = {
+    {   /* In port. */
+        .type = RTE_ACL_FIELD_TYPE_BITMASK,
+        .size = sizeof(uint8_t),
+        .field_index = ACL_KEYFIELD_IN_PORT,
+        .input_index = 0,
+        .offset = offsetof(struct acl_search_key, in_port),
+    },
+    {   /* IP src. */
+        .type = RTE_ACL_FIELD_TYPE_MASK,
+        .size = sizeof(uint32_t),
+        .field_index = ACL_KEYFIELD_IP_SRC,
+        .input_index = 1,
+        .offset = offsetof(struct acl_search_key, ip_src),
+    },
+    {   /* IP dst */
+        .type = RTE_ACL_FIELD_TYPE_MASK,
+        .size = sizeof(uint32_t),
+        .field_index = ACL_KEYFIELD_IP_DST,
+        .input_index = 2,
+        .offset = offsetof(struct acl_search_key, ip_dst),
+    },
+    #if 0
+    {   /* Port Src */
+        .type = RTE_ACL_FIELD_TYPE_BITMASK,
+        .size = sizeof(uint16_t),
+        .field_index = ACL_KEYFIELD_PORT_SRC,
+        /* Port Src and Port Dst will be accomodated into
+         * the same element of the search key. */
+        .input_index = 3,
+        .offset = offsetof(struct acl_search_key, prt_src),
+    },
+    {   /* Port Dst */
+        .type = RTE_ACL_FIELD_TYPE_BITMASK,
+        .size = sizeof(uint16_t),
+        .field_index = ACL_KEYFIELD_PORT_DST,
+        /* Port Src and Port Dst will be accomodated into
+         * the same element of the search key. */
+        .input_index = 3,
+        .offset = offsetof(struct acl_search_key, prt_dst),
+    },
+    #endif
+};
+
+static int
+acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
+{
+    if (acl_cache->rules_offset == 0) {
+        return;
+    }
+
+    int rules_offset = acl_cache->rules_offset; // TODO atomic?
+    VLOG_INFO("rules_offset = %d", rules_offset);
+    struct rte_acl_rule acl_entries[rules_offset];
+    int num_rules = 0;
+
+    for (int i = 1; i <= rules_offset; i++) {
+        struct dpcls_rule *rule = acl_cache->rules[i];
+        if (rule == NULL) continue;
+
+        VLOG_INFO("rule %p", rule);
+
+        struct rte_acl_rule *acl_entry = &acl_entries[num_rules++];
+        acl_entry->field[ACL_KEYFIELD_IN_PORT].value.u8 = 1; // TODO in_port;
+        acl_entry->field[ACL_KEYFIELD_IN_PORT].mask_range.u8 = 0xff;
+
+        acl_entry->field[ACL_KEYFIELD_IP_SRC].value.u32
+            = MINIFLOW_GET_BE32(&rule->flow.mf, nw_src);
+        acl_entry->field[ACL_KEYFIELD_IP_SRC].mask_range.u32 = 32;	// TODO
+
+        acl_entry->field[ACL_KEYFIELD_IP_DST].value.u32
+            = MINIFLOW_GET_BE32(&rule->flow.mf, nw_dst);
+        acl_entry->field[ACL_KEYFIELD_IP_DST].mask_range.u32 = 32;	// TODO
+
+        acl_entry->data.priority = 3;
+        acl_entry->data.category_mask = 0x1;
+        acl_entry->data.userdata = i;
+    }
+
+    rte_acl_reset_rules(ctx);
+    if (num_rules > 0) {
+        int ret = rte_acl_add_rules(ctx, acl_entries, num_rules);
+        if (ret != 0) VLOG_INFO("rte_acl_add_rules ret = %d", ret);
+        ovs_assert(ret == 0);
+    }
+    return num_rules;
+}
+
+static void
+acl_build_thread(void *acl_cache_)
+{
+    struct acl_cache *acl_cache = acl_cache_;
+    uint8_t next = 0;
+    struct rte_acl_config cfg;
+
+    memset(&cfg, 0, sizeof cfg);
+    cfg.num_categories = 1;
+    cfg.num_fields = ARRAY_SIZE(rule_defs);
+    memcpy(&cfg.defs, rule_defs, sizeof rule_defs);
+
+    for (;;) {
+        uint64_t request_seq = seq_read(acl_cache->request);
+
+        uint8_t cur;
+        //atomic_read(&acl_cache->cur, &cur);
+        cur = acl_cache->cur;
+        if (next != !cur) {
+            struct rte_acl_ctx *ctx;
+
+            next = !cur;
+            ctx = acl_cache->acl_ctx[next];
+
+            int num_rules = acl_populate_rules(acl_cache, ctx);
+            if (num_rules > 0) {
+                int ret = rte_acl_build(ctx, &cfg);
+                if (ret != 0) VLOG_INFO("ret = %d", ret);
+                ovs_assert(ret == 0);
+
+                acl_cache->built[next] = true;
+
+                VLOG_INFO("%s build %d", __func__, next);
+                atomic_store(&acl_cache->cur, next);
+            } else {
+                next = !next;
+            }
+
+            VLOG_INFO("%d => %d num %d", next, !cur, num_rules);
+        }
+
+        seq_wait(acl_cache->request, request_seq);
+        poll_block();
+    }
+}
+
+static inline void
+acl_init(void)
+{
+    if (acl_cache == NULL) {
+        int ret;
+        acl_cache = xzalloc(sizeof *acl_cache);
+
+        struct rte_acl_param acl_param;
+        acl_param.socket_id = SOCKET_ID_ANY;
+        acl_param.rule_size = RTE_ACL_RULE_SZ(ARRAY_SIZE(rule_defs));
+        acl_param.max_rule_num = 8000;
+
+        acl_param.name = "acl-cache-0";
+        acl_cache->acl_ctx[0] = rte_acl_create(&acl_param);
+        ovs_assert(acl_cache->acl_ctx[0] != NULL);
+        ret = rte_acl_set_ctx_classify(acl_cache->acl_ctx[0],
+                                       RTE_ACL_CLASSIFY_SCALAR);
+		ovs_assert(ret == 0);
+
+        acl_param.name = "acl-cache-1";
+        acl_cache->acl_ctx[1] = rte_acl_create(&acl_param);
+        ovs_assert(acl_cache->acl_ctx[1] != NULL);
+        ret = rte_acl_set_ctx_classify(acl_cache->acl_ctx[1],
+                                       RTE_ACL_CLASSIFY_SCALAR);
+		ovs_assert(ret == 0);
+
+        acl_cache->rules = xmalloc(acl_param.max_rule_num *
+                                   sizeof acl_cache->rules[0]);
+
+        acl_cache->request = seq_create();
+        acl_cache->thread = ovs_thread_create("acl_build",
+                                              acl_build_thread,
+                                              acl_cache);
+    }
+}
+
+static void
+acl_insert(struct dpcls *cls, struct dpcls_rule *rule,
+           const struct netdev_flow_key *mask,
+           odp_port_t in_port)
+{
+    acl_init();
+
+    VLOG_INFO("in %s, proto = %d in_port = %d\n", __func__,
+        MINIFLOW_GET_U8(&rule->flow.mf, nw_proto), in_port);
+
+    if (acl_lookup(cls, &rule->flow) != 0) {
+        return;
+    }
+
+    // TODO exceeds array size
+    acl_cache->rules[++acl_cache->rules_offset] = rule;
+    seq_change(acl_cache->request);
+}
+
+static void
+acl_remove(struct dpcls *cls, struct dpcls_rule *rule)
+{
+    for (int i = 1; i <= acl_cache->rules_offset; i++) {
+        if (acl_cache->rules[i] == rule) {
+            acl_cache->rules[i] = NULL;
+            return;
+        }
+    }
+}
+
+static int
+acl_lookup(struct dpcls *cls, const struct netdev_flow_key *mask)
+{
+    acl_init();
+
+    // TODO
+    int in_port = 1;
+
+    /* lookup */
+    int cur = acl_cache->cur;
+    if (acl_cache->built[cur]) {
+        struct acl_search_key acl_key;
+        acl_key.in_port = in_port;
+        acl_key.ip_src = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_src));
+        acl_key.ip_dst = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_dst));
+
+        uint8_t *data[1];
+        uint32_t result;
+        data[0] = &acl_key;
+
+        struct rte_acl_ctx *ctx = acl_cache->acl_ctx[cur];
+        int ret = rte_acl_classify(ctx, data, &result, 1, 1);
+        if (ret == 0 && result != 0) {
+            VLOG_INFO("rte_acl_classify(%d) result is %d", cur, result);
+            return result;
+        } else {
+            VLOG_INFO("rte_acl_classify(%d) returns %d", cur, ret);
+        }
+    }
+    return 0;
+}
+
+static inline bool
+acl_processing(struct dp_netdev_pmd_thread *pmd,
+               struct dp_packet_batch *packets_,
+               struct netdev_flow_key *keys,
+               struct packet_batch_per_flow batches[], size_t *n_batches)
+{
+    acl_init();
+
+    // build: for each subtable and for each dpcls_rule.
+
+    return false;
+}
+
 static inline void
 fast_path_processing(struct dp_netdev_pmd_thread *pmd,
                      struct dp_packet_batch *packets_,
@@ -6239,6 +6525,8 @@ dpcls_lookup(struct dpcls *cls, const struct netdev_flow_key keys[],
     map_type found_map;
     uint32_t hashes[MAP_BITS];
     const struct cmap_node *nodes[MAP_BITS];
+
+    acl_lookup(cls, &keys[0]);
 
     if (cnt != MAP_BITS) {
         keys_map >>= MAP_BITS - cnt; /* Clear extra bits. */
