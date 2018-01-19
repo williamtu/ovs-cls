@@ -5241,14 +5241,14 @@ static struct rte_acl_field_def rule_defs[ACL_KEYFIELD_MAX] = {
         .offset = offsetof(struct acl_search_key, macs[2]),
     },
     {   /* IP src. */
-        .type = RTE_ACL_FIELD_TYPE_MASK,
+        .type = RTE_ACL_FIELD_TYPE_BITMASK,
         .size = sizeof(uint32_t),
         .field_index = ACL_KEYFIELD_IP_SRC,
         .input_index = 6,
         .offset = offsetof(struct acl_search_key, ip_src),
     },
     {   /* IP dst */
-        .type = RTE_ACL_FIELD_TYPE_MASK,
+        .type = RTE_ACL_FIELD_TYPE_BITMASK,
         .size = sizeof(uint32_t),
         .field_index = ACL_KEYFIELD_IP_DST,
         .input_index = 7,
@@ -5319,28 +5319,31 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
         acl_entry->field[ACL_KEYFIELD_DL_TYPE].mask_range.u16 = 0xffff;
 
         ovs_u128 macs = MINIFLOW_GET_U128(&rule->flow.mf, dl_dst);
-        uint8_t pmacs = &macs;
+        uint8_t *pmacs = &macs;
 
         /* macs */
-        memcpy(&acl_entry->field[ACL_KEYFIELD_DL_MAC0].value.u32,
-               pmacs, sizeof (uint32_t));
+        acl_entry->field[ACL_KEYFIELD_DL_MAC0].value.u32
+            = *(uint32_t *)pmacs;
         acl_entry->field[ACL_KEYFIELD_DL_MAC0].mask_range.u32 = 0xffffffff;
-        memcpy(&acl_entry->field[ACL_KEYFIELD_DL_MAC1].value.u32,
-               pmacs+4, sizeof (uint32_t));
+        acl_entry->field[ACL_KEYFIELD_DL_MAC1].value.u32
+            = *(uint32_t *)(pmacs+4);
         acl_entry->field[ACL_KEYFIELD_DL_MAC1].mask_range.u32 = 0xffffffff;
-        memcpy(&acl_entry->field[ACL_KEYFIELD_DL_MAC2].value.u32,
-               pmacs+8, sizeof (uint32_t));
+        acl_entry->field[ACL_KEYFIELD_DL_MAC2].value.u32
+            = *(uint32_t *)(pmacs+8);
         acl_entry->field[ACL_KEYFIELD_DL_MAC2].mask_range.u32 = 0xffffffff;
 
         /* ip src */
         acl_entry->field[ACL_KEYFIELD_IP_SRC].value.u32
             = MINIFLOW_GET_BE32(&rule->flow.mf, nw_src);
-        acl_entry->field[ACL_KEYFIELD_IP_SRC].mask_range.u32 = 32;	// TODO
+        acl_entry->field[ACL_KEYFIELD_IP_SRC].mask_range.u32
+            = MINIFLOW_GET_BE32(&rule->mask->mf, nw_src);
+        VLOG_INFO("ip mask is %x", acl_entry->field[ACL_KEYFIELD_IP_SRC].mask_range.u32);
 
         /* ip dst */
         acl_entry->field[ACL_KEYFIELD_IP_DST].value.u32
             = MINIFLOW_GET_BE32(&rule->flow.mf, nw_dst);
-        acl_entry->field[ACL_KEYFIELD_IP_DST].mask_range.u32 = 32;	// TODO
+        acl_entry->field[ACL_KEYFIELD_IP_DST].mask_range.u32
+            = MINIFLOW_GET_BE32(&rule->mask->mf, nw_dst);
 
         /* l4 src port */
         acl_entry->field[ACL_KEYFIELD_PORT_SRC].value.u16
