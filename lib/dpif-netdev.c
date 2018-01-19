@@ -5489,15 +5489,27 @@ acl_lookup(struct dpcls *cls, const struct netdev_flow_key *mask)
     /* lookup */
     int cur = acl_cache->cur;
     if (acl_cache->built[cur]) {
-        struct acl_search_key acl_key;
-        uint16_t dl_type = ntohs(MINIFLOW_GET_BE16(&mask->mf, dl_type));
-        acl_key.dl_type = hash_dl_type(dl_type);
-        acl_key.ip_src = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_src));
-        acl_key.ip_dst = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_dst));
+        struct acl_search_key key;
+        key.ip_proto = MINIFLOW_GET_U8(&mask->mf, nw_proto);
+
+        ovs_be64 tun_id = MINIFLOW_GET_BE64(&mask->mf, tunnel.tun_id);
+        tun_id = ntohll(tun_id);
+        key.tun_id = (uint32_t)(tun_id & 0xffffffff);
+        key.tun_id_ = (uint16_t)((tun_id >> 32) & 0xffff);
+
+        key.dl_type = ntohs(MINIFLOW_GET_BE16(&mask->mf, dl_type));
+
+        ovs_u128 macs = MINIFLOW_GET_U128(&mask->mf, dl_dst);
+        memcpy(&key.macs, &macs, sizeof key.macs);
+
+        key.ip_src = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_src));
+        key.ip_dst = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_dst));
+        key.port_src = ntohs(MINIFLOW_GET_BE16(&mask->mf, tp_src));
+        key.port_dst = ntohs(MINIFLOW_GET_BE16(&mask->mf, tp_dst));
 
         uint8_t *data[1];
         uint32_t result;
-        data[0] = &acl_key;
+        data[0] = &key;
 
         struct rte_acl_ctx *ctx = acl_cache->acl_ctx[cur];
         int ret = rte_acl_classify(ctx, data, &result, 1, 1);
