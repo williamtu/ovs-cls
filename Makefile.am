@@ -94,6 +94,7 @@ EXTRA_DIST = \
 	$(MAN_ROOTS) \
 	Vagrantfile \
 	Vagrantfile-FreeBSD \
+    help-script.sh \
 	.mailmap
 bin_PROGRAMS =
 sbin_PROGRAMS =

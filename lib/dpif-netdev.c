@@ -1906,7 +1906,7 @@ dp_netdev_pmd_remove_flow(struct dp_netdev_pmd_thread *pmd,
     cls = dp_netdev_pmd_lookup_dpcls(pmd, in_port);
     ovs_assert(cls != NULL);
     dpcls_remove(cls, &flow->cr);
-    acl_remove(cls, &flow->cr);
+    //acl_remove(cls, &flow->cr);
     cmap_remove(&pmd->flow_table, node, dp_netdev_flow_hash(&flow->ufid));
     flow->dead = true;
 
@@ -2237,6 +2237,9 @@ static inline struct dp_netdev_flow *
 emc_lookup(struct emc_cache *cache, const struct netdev_flow_key *key)
 {
     struct emc_entry *current_entry;
+
+    // SKIP
+    return NULL;
 
     EMC_FOR_EACH_POS_WITH_HASH(cache, current_entry, key->hash) {
         if (current_entry->key.hash == key->hash
@@ -5384,6 +5387,10 @@ acl_build_thread(void *acl_cache_)
     for (;;) {
         uint64_t request_seq = seq_read(acl_cache->request);
 
+        VLOG_INFO("got build request, going to build in 5 seconds..");
+        sleep(5);
+        VLOG_INFO("start build acl"); 
+
         uint8_t cur;
         //atomic_read(&acl_cache->cur, &cur);
         cur = acl_cache->cur;
@@ -5407,7 +5414,7 @@ acl_build_thread(void *acl_cache_)
                 next = !next;
             }
 
-            VLOG_INFO("%d => %d num %d", next, !cur, num_rules);
+            VLOG_INFO("build total rule number %d", num_rules);
         }
 
         seq_wait(acl_cache->request, request_seq);
@@ -5460,6 +5467,10 @@ acl_insert(struct dpcls *cls, struct dpcls_rule *rule,
 
     VLOG_INFO("in %s, proto = %d in_port = %d\n", __func__,
         MINIFLOW_GET_U8(&rule->flow.mf, nw_proto), in_port);
+
+    for (int i = 0; i < acl_cache->rules_offset; i++) {
+        if (acl_cache->rules[i] == rule) return;
+    }
 
     if (acl_lookup(cls, &rule->flow) != 0) {
         return;
@@ -6580,6 +6591,8 @@ static void
 dpcls_remove(struct dpcls *cls, struct dpcls_rule *rule)
 {
     struct dpcls_subtable *subtable;
+
+    return;
 
     ovs_assert(rule->mask);
 
