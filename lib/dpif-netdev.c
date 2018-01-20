@@ -5277,6 +5277,8 @@ static struct rte_acl_field_def rule_defs[ACL_KEYFIELD_MAX] = {
     },
 };
 
+RTE_ACL_RULE_DEF(ovs_acl_rule, RTE_DIM(rule_defs));
+
 static int
 acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
 {
@@ -5286,16 +5288,23 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
 
     int rules_offset = acl_cache->rules_offset; // TODO atomic?
     VLOG_INFO("rules_offset = %d", rules_offset);
-    struct rte_acl_rule acl_entries[rules_offset];
+
+    //struct rte_acl_rule acl_entries[rules_offset];
+    struct ovs_acl_rule acl_entries[256];
     int num_rules = 0;
+    
+    memset(acl_entries, 0, sizeof(acl_entries));
 
     for (int i = 1; i <= rules_offset; i++) {
+    //for (int i = 0; i < rules_offset; i++) {
         struct dpcls_rule *rule = acl_cache->rules[i];
         if (rule == NULL) continue;
 
         VLOG_INFO("rule %p", rule);
 
-        struct rte_acl_rule *acl_entry = &acl_entries[num_rules++];
+        //struct rte_acl_rule *acl_entry = &acl_entries[num_rules++];
+        struct ovs_acl_rule *acl_entry = &acl_entries[num_rules++];
+	memset(acl_entry, 0, sizeof(*acl_entry));
 
         /* ip proto */
         acl_entry->field[ACL_KEYFIELD_PROTO].value.u8
@@ -5322,7 +5331,7 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
         acl_entry->field[ACL_KEYFIELD_DL_TYPE].mask_range.u16 = 0xffff;
 
         ovs_u128 macs = MINIFLOW_GET_U128(&rule->flow.mf, dl_dst);
-        uint8_t *pmacs = &macs;
+        uint8_t *pmacs = (uint8_t *)&macs;
 
         /* macs */
         acl_entry->field[ACL_KEYFIELD_DL_MAC0].value.u32
@@ -5358,17 +5367,20 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
             = MINIFLOW_GET_BE16(&rule->flow.mf, tp_dst);
         acl_entry->field[ACL_KEYFIELD_PORT_DST].mask_range.u16 = 0xffff;
 
-        acl_entry->data.priority = 3;
+        acl_entry->data.priority = 1;
         acl_entry->data.category_mask = 0x1;
         acl_entry->data.userdata = i;
     }
 
     rte_acl_reset_rules(ctx);
     if (num_rules > 0) {
-        int ret = rte_acl_add_rules(ctx, acl_entries, num_rules);
+
+        int ret = rte_acl_add_rules(ctx, (struct rte_acl_rule *)acl_entries, num_rules);
         if (ret != 0) VLOG_INFO("rte_acl_add_rules ret = %d", ret);
         ovs_assert(ret == 0);
     }
+
+    VLOG_INFO("rte_acl_add_rules done");
     return num_rules;
 }
 
@@ -5431,7 +5443,8 @@ acl_init(void)
 
         struct rte_acl_param acl_param;
         acl_param.socket_id = SOCKET_ID_ANY;
-        acl_param.rule_size = RTE_ACL_RULE_SZ(ARRAY_SIZE(rule_defs));
+        //acl_param.rule_size = RTE_ACL_RULE_SZ(ARRAY_SIZE(rule_defs));
+        acl_param.rule_size = RTE_ACL_RULE_SZ(RTE_DIM(rule_defs));
         acl_param.max_rule_num = 8000;
 
         acl_param.name = "acl-cache-0";
@@ -5439,14 +5452,14 @@ acl_init(void)
         ovs_assert(acl_cache->acl_ctx[0] != NULL);
         ret = rte_acl_set_ctx_classify(acl_cache->acl_ctx[0],
                                        RTE_ACL_CLASSIFY_SCALAR);
-		ovs_assert(ret == 0);
+	ovs_assert(ret == 0);
 
         acl_param.name = "acl-cache-1";
         acl_cache->acl_ctx[1] = rte_acl_create(&acl_param);
         ovs_assert(acl_cache->acl_ctx[1] != NULL);
         ret = rte_acl_set_ctx_classify(acl_cache->acl_ctx[1],
                                        RTE_ACL_CLASSIFY_SCALAR);
-		ovs_assert(ret == 0);
+	ovs_assert(ret == 0);
 
         acl_cache->rules = xmalloc(acl_param.max_rule_num *
                                    sizeof acl_cache->rules[0]);
