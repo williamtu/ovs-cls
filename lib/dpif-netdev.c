@@ -5291,8 +5291,8 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
     int rules_offset = acl_cache->rules_offset; // TODO atomic?
     VLOG_INFO("rules_offset = %d", rules_offset);
 
-    //struct rte_acl_rule acl_entries[rules_offset];
-    struct ovs_acl_rule acl_entries[256];
+    struct rte_acl_rule acl_entries[rules_offset];
+   //struct ovs_acl_rule acl_entries[256];
     int num_rules = 0;
     
     memset(acl_entries, 0, sizeof(acl_entries));
@@ -5351,7 +5351,7 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
             = MINIFLOW_GET_BE32(&rule->flow.mf, nw_src);
         acl_entry->field[ACL_KEYFIELD_IP_SRC].mask_range.u32
             = MINIFLOW_GET_BE32(&rule->mask->mf, nw_src);
-        VLOG_INFO("ip mask is %x", acl_entry->field[ACL_KEYFIELD_IP_SRC].mask_range.u32);
+        //VLOG_INFO("ip mask is %x", acl_entry->field[ACL_KEYFIELD_IP_SRC].mask_range.u32);
 
         /* ip dst */
         acl_entry->field[ACL_KEYFIELD_IP_DST].value.u32
@@ -6611,7 +6611,6 @@ dpcls_remove(struct dpcls *cls, struct dpcls_rule *rule)
 {
     struct dpcls_subtable *subtable;
 
-    return;
 
     ovs_assert(rule->mask);
 
