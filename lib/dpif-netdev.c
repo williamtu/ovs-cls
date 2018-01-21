@@ -5291,7 +5291,7 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
     int rules_offset = acl_cache->rules_offset; // TODO atomic?
     VLOG_INFO("rules_offset = %d", rules_offset);
 
-    struct rte_acl_rule acl_entries[rules_offset];
+    struct ovs_acl_rule acl_entries[rules_offset];
    //struct ovs_acl_rule acl_entries[256];
     int num_rules = 0;
     
