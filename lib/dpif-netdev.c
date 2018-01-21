@@ -1906,7 +1906,7 @@ dp_netdev_pmd_remove_flow(struct dp_netdev_pmd_thread *pmd,
     cls = dp_netdev_pmd_lookup_dpcls(pmd, in_port);
     ovs_assert(cls != NULL);
     dpcls_remove(cls, &flow->cr);
-    //acl_remove(cls, &flow->cr);
+    acl_remove(cls, &flow->cr);
     cmap_remove(&pmd->flow_table, node, dp_netdev_flow_hash(&flow->ufid));
     flow->dead = true;
 
@@ -5165,6 +5165,7 @@ static struct acl_cache {
     uint16_t rules_offset;
     struct dpcls_rule **rules;
 } *acl_cache;
+static struct ovs_mutex acl_cache_lock = OVS_MUTEX_INITIALIZER;
 
 enum {
     ACL_KEYFIELD_PROTO,
@@ -5412,7 +5413,9 @@ acl_build_thread(void *acl_cache_)
             next = !cur;
             ctx = acl_cache->acl_ctx[next];
 
+            ovs_mutex_lock(&acl_cache_lock);
             int num_rules = acl_populate_rules(acl_cache, ctx);
+            ovs_mutex_unlock(&acl_cache_lock);
             if (num_rules > 0) {
                 int ret = rte_acl_build(ctx, &cfg);
                 if (ret != 0) VLOG_INFO("ret = %d", ret);
@@ -5499,7 +5502,10 @@ acl_remove(struct dpcls *cls, struct dpcls_rule *rule)
 {
     for (int i = 1; i <= acl_cache->rules_offset; i++) {
         if (acl_cache->rules[i] == rule) {
+            VLOG_INFO("%s acl remove rule %d\n", __func__, i);
+            ovs_mutex_lock(&acl_cache_lock);
             acl_cache->rules[i] = NULL;
+            ovs_mutex_unlock(&acl_cache_lock);
             return;
         }
     }
@@ -6666,8 +6672,6 @@ dpcls_lookup(struct dpcls *cls, const struct netdev_flow_key keys[],
     uint32_t hashes[MAP_BITS];
     const struct cmap_node *nodes[MAP_BITS];
 
-    acl_lookup(cls, &keys[0]);
-
     if (cnt != MAP_BITS) {
         keys_map >>= MAP_BITS - cnt; /* Clear extra bits. */
     }
@@ -6675,6 +6679,16 @@ dpcls_lookup(struct dpcls *cls, const struct netdev_flow_key keys[],
 
     int lookups_match = 0, subtable_pos = 1;
 
+    for (int i = 0; i < cnt; i++) {
+        int index = acl_lookup(cls, &keys[i]);
+        if (index != 0 && acl_cache->rules[index] != NULL) {
+            rules[i] = acl_cache->rules[index];
+            lookups_match++;
+        }
+    }
+    *num_lookups_p = lookups_match;
+    return (lookups_match == cnt);
+	
     /* The Datapath classifier - aka dpcls - is composed of subtables.
      * Subtables are dynamically created as needed when new rules are inserted.
      * Each subtable collects rules with matches on a specific subset of packet
