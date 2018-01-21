@@ -221,9 +221,9 @@ static void acl_insert(struct dpcls *, struct dpcls_rule *rule,
                        const struct netdev_flow_key *mask,
                        odp_port_t in_port);
 static void acl_remove(struct dpcls *cls, struct dpcls_rule *rule);
-static int acl_lookup(struct dpcls *cls, const struct netdev_flow_key keys[],
+static int acl_lookup_batch(struct dpcls *cls, const struct netdev_flow_key keys[],
                       int results[], int cnt);
-
+static int acl_lookup(struct dpcls *cls, const struct netdev_flow_key *mask);
 static inline struct dpcls_subtable *
 dpcls_find_subtable(struct dpcls *cls, const struct netdev_flow_key *mask);
 
@@ -5417,6 +5417,8 @@ acl_build_thread(void *acl_cache_)
             ovs_mutex_lock(&acl_cache_lock);
             int num_rules = acl_populate_rules(acl_cache, ctx);
             ovs_mutex_unlock(&acl_cache_lock);
+            VLOG_INFO("build total rule number %d", num_rules);
+
             if (num_rules > 0) {
                 int ret = rte_acl_build(ctx, &cfg);
                 if (ret != 0) VLOG_INFO("ret = %d", ret);
@@ -5426,11 +5428,22 @@ acl_build_thread(void *acl_cache_)
 
                 VLOG_INFO("%s build %d", __func__, next);
                 atomic_store(&acl_cache->cur, next);
+
+		int last_off = acl_cache->rules_offset;
+		struct dpcls_rule *last = acl_cache->rules[last_off];
+		if (last != NULL) {
+			VLOG_INFO("validating build..");
+			int results[1];
+			results[0] = 0;
+			ret = acl_lookup_batch(NULL, &last->flow, results, 1);
+			ovs_assert(ret == 0 && results[0] == last_off);
+			VLOG_INFO("validating build.. ok");
+		}
+
             } else {
                 next = !next;
             }
 
-            VLOG_INFO("build total rule number %d", num_rules);
         }
 
         seq_wait(acl_cache->request, request_seq);
@@ -5489,10 +5502,12 @@ acl_insert(struct dpcls *cls, struct dpcls_rule *rule,
         if (acl_cache->rules[i] == rule) return;
     }
 
+    /*
     int results[1];
     results[0] = 0;
-    int ret = acl_lookup(cls, &rule->flow, results, 1);
-    VLOG_INFO("%s acl_lookup returns: result = %d ret = %d", __func__, results[0], ret);
+    int ret = acl_lookup_batch(cls, &rule->flow, results, 1);
+    VLOG_INFO("%s acl_lookup_batch returns: result = %d ret = %d", __func__, results[0], ret);
+    */
 
     // TODO exceeds array size
     acl_cache->rules[++acl_cache->rules_offset] = rule;
@@ -5513,7 +5528,49 @@ acl_remove(struct dpcls *cls, struct dpcls_rule *rule)
     }
 }
 
-static int acl_lookup(struct dpcls *cls, const struct netdev_flow_key masks[],
+static int
+acl_lookup(struct dpcls *cls, const struct netdev_flow_key *mask)
+{
+     acl_init();
+ 
+     /* lookup */
+     int cur = acl_cache->cur;
+     if (acl_cache->built[cur]) {
+        struct acl_search_key key;
+        key.ip_proto = MINIFLOW_GET_U8(&mask->mf, nw_proto);
+
+        ovs_be64 tun_id = MINIFLOW_GET_BE64(&mask->mf, tunnel.tun_id);
+        tun_id = ntohll(tun_id);
+        key.tun_id = (uint32_t)(tun_id & 0xffffffff);
+        key.tun_id_ = (uint16_t)((tun_id >> 32) & 0xffff);
+
+        key.dl_type = ntohs(MINIFLOW_GET_BE16(&mask->mf, dl_type));
+
+        ovs_u128 macs = MINIFLOW_GET_U128(&mask->mf, dl_dst);
+        memcpy(&key.macs, &macs, sizeof key.macs);
+
+        key.ip_src = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_src));
+        key.ip_dst = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_dst));
+        key.port_src = ntohs(MINIFLOW_GET_BE16(&mask->mf, tp_src));
+        key.port_dst = ntohs(MINIFLOW_GET_BE16(&mask->mf, tp_dst));
+
+        uint8_t *data[1];
+        uint32_t result;
+        data[0] = &key;
+ 
+        struct rte_acl_ctx *ctx = acl_cache->acl_ctx[cur];
+        int ret = rte_acl_classify(ctx, data, &result, 1, 1);
+        if (ret == 0 && result != 0) {
+            VLOG_INFO("rte_acl_classify(%d) result is %d", cur, result);
+            return result;
+        } else {
+             VLOG_INFO("rte_acl_classify(%d) returns %d", cur, ret);
+         }
+     }
+     return 0;
+}
+
+static int acl_lookup_batch(struct dpcls *cls, const struct netdev_flow_key masks[],
                       int results[], int cnt)
 {
     acl_init();
@@ -6678,9 +6735,19 @@ dpcls_lookup(struct dpcls *cls, const struct netdev_flow_key keys[],
 
     int lookups_match = 0, subtable_pos = 1;
 
+    for (int i = 0; i < cnt; i++) {
+        int index = acl_lookup(cls, &keys[i]);
+        if (index != 0 && acl_cache->rules[index] != NULL) {
+            rules[i] = acl_cache->rules[index];
+            lookups_match++;
+        }
+    }
+    if (num_lookups_p) *num_lookups_p = lookups_match;
+
+    /*
     int results[cnt];
     memset(results, 0, sizeof results);
-    int ret = acl_lookup(cls, keys, results, cnt);
+    int ret = acl_lookup_batch(cls, keys, results, cnt);
     for (int i = 0; i < cnt; i++) {
         int index = results[i];
         if (index != 0 && acl_cache->rules[index] != NULL) {
@@ -6689,6 +6756,9 @@ dpcls_lookup(struct dpcls *cls, const struct netdev_flow_key keys[],
         }
     }
     if (num_lookups_p) *num_lookups_p = lookups_match;
+    */
+
+    VLOG_INFO("%s lookup match %d cnt %lu\n", __func__, lookups_match, cnt);
     return (lookups_match == cnt);
 	
     /* The Datapath classifier - aka dpcls - is composed of subtables.
