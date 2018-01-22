@@ -5173,9 +5173,9 @@ enum {
     ACL_KEYFIELD_TNL_ID,
     ACL_KEYFIELD_TNL_ID_,
     ACL_KEYFIELD_DL_TYPE,
-    ACL_KEYFIELD_DL_MAC0,
-    ACL_KEYFIELD_DL_MAC1,
-    ACL_KEYFIELD_DL_MAC2,
+//    ACL_KEYFIELD_DL_MAC0,
+//    ACL_KEYFIELD_DL_MAC1,
+//    ACL_KEYFIELD_DL_MAC2,
     ACL_KEYFIELD_IP_SRC,
     ACL_KEYFIELD_IP_DST,
     ACL_KEYFIELD_PORT_SRC,
@@ -5188,7 +5188,7 @@ struct acl_search_key {
     uint32_t tun_id;
     uint16_t tun_id_;
     uint16_t dl_type;
-    uint32_t macs[3];
+    //uint32_t macs[3];
     uint32_t ip_src;
     uint32_t ip_dst;
     uint16_t port_src;
@@ -5203,6 +5203,63 @@ static struct rte_acl_field_def rule_defs[ACL_KEYFIELD_MAX] = {
         .input_index = 0,
         .offset = offsetof(struct acl_search_key, ip_proto),
     },
+#if 1
+    {   /* tunnel id part 1. */
+        .type = RTE_ACL_FIELD_TYPE_BITMASK,
+        .size = sizeof(uint32_t),
+        .field_index = ACL_KEYFIELD_TNL_ID,
+        .input_index = 1,
+        .offset = offsetof(struct acl_search_key, tun_id),
+    },
+    {   /* tunnel id part 2. */
+        .type = RTE_ACL_FIELD_TYPE_BITMASK,
+        .size = sizeof(uint16_t),
+        .field_index = ACL_KEYFIELD_TNL_ID_,
+        .input_index = 2,
+        .offset = offsetof(struct acl_search_key, tun_id_),
+    },
+    {   /* dl type. */
+        .type = RTE_ACL_FIELD_TYPE_BITMASK,
+        .size = sizeof(uint16_t),
+        .field_index = ACL_KEYFIELD_DL_TYPE,
+        .input_index = 2,
+        .offset = offsetof(struct acl_search_key, dl_type),
+    },
+
+    {   /* IP src. */
+        .type = RTE_ACL_FIELD_TYPE_BITMASK,
+        .size = sizeof(uint32_t),
+        .field_index = ACL_KEYFIELD_IP_SRC,
+        .input_index = 3,
+        .offset = offsetof(struct acl_search_key, ip_src),
+    },
+    {   /* IP dst */
+        .type = RTE_ACL_FIELD_TYPE_BITMASK,
+        .size = sizeof(uint32_t),
+        .field_index = ACL_KEYFIELD_IP_DST,
+        .input_index = 4,
+        .offset = offsetof(struct acl_search_key, ip_dst),
+    },
+    {   /* Port Src */
+        .type = RTE_ACL_FIELD_TYPE_BITMASK,
+        .size = sizeof(uint16_t),
+        .field_index = ACL_KEYFIELD_PORT_SRC,
+        /* Port Src and Port Dst will be accomodated into
+         * the same element of the search key. */
+        .input_index = 5,
+        .offset = offsetof(struct acl_search_key, port_src),
+    },
+    {   /* Port Dst */
+        .type = RTE_ACL_FIELD_TYPE_BITMASK,
+        .size = sizeof(uint16_t),
+        .field_index = ACL_KEYFIELD_PORT_DST,
+        /* Port Src and Port Dst will be accomodated into
+         * the same element of the search key. */
+        .input_index = 5,
+        .offset = offsetof(struct acl_search_key, port_dst),
+    },
+#endif
+#if 0
     {   /* tunnel id part 1. */
         .type = RTE_ACL_FIELD_TYPE_BITMASK,
         .size = sizeof(uint32_t),
@@ -5277,6 +5334,7 @@ static struct rte_acl_field_def rule_defs[ACL_KEYFIELD_MAX] = {
         .input_index = 8,
         .offset = offsetof(struct acl_search_key, port_dst),
     },
+#endif
 };
 
 RTE_ACL_RULE_DEF(ovs_acl_rule, RTE_DIM(rule_defs));
@@ -5320,32 +5378,32 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
         /* tun_id least 32 bits */
         acl_entry->field[ACL_KEYFIELD_TNL_ID].value.u32
             = (uint32_t)(tun_id & 0xffffffff);
-        acl_entry->field[ACL_KEYFIELD_TNL_ID].mask_range.u32 = 0xffffffff;
+        acl_entry->field[ACL_KEYFIELD_TNL_ID].mask_range.u32 = 0;
 
         /* tun_id next 16 bits */
         acl_entry->field[ACL_KEYFIELD_TNL_ID_].value.u16
             = (uint16_t)((tun_id >> 32) & 0xffff);
-        acl_entry->field[ACL_KEYFIELD_TNL_ID_].mask_range.u16 = 0xffff;
+        acl_entry->field[ACL_KEYFIELD_TNL_ID_].mask_range.u16 = 0;
 
         /* dl type */
         acl_entry->field[ACL_KEYFIELD_DL_TYPE].value.u16
             = MINIFLOW_GET_BE16(&rule->flow.mf, dl_type);
-        acl_entry->field[ACL_KEYFIELD_DL_TYPE].mask_range.u16 = 0xffff;
-
+        acl_entry->field[ACL_KEYFIELD_DL_TYPE].mask_range.u16 = 0;
+#if 0
         ovs_u128 macs = MINIFLOW_GET_U128(&rule->flow.mf, dl_dst);
         uint8_t *pmacs = (uint8_t *)&macs;
 
         /* macs */
         acl_entry->field[ACL_KEYFIELD_DL_MAC0].value.u32
             = *(uint32_t *)pmacs;
-        acl_entry->field[ACL_KEYFIELD_DL_MAC0].mask_range.u32 = 0xffffffff;
+        acl_entry->field[ACL_KEYFIELD_DL_MAC0].mask_range.u32 = 0;
         acl_entry->field[ACL_KEYFIELD_DL_MAC1].value.u32
             = *(uint32_t *)(pmacs+4);
-        acl_entry->field[ACL_KEYFIELD_DL_MAC1].mask_range.u32 = 0xffffffff;
+        acl_entry->field[ACL_KEYFIELD_DL_MAC1].mask_range.u32 = 0;
         acl_entry->field[ACL_KEYFIELD_DL_MAC2].value.u32
             = *(uint32_t *)(pmacs+8);
-        acl_entry->field[ACL_KEYFIELD_DL_MAC2].mask_range.u32 = 0xffffffff;
-
+        acl_entry->field[ACL_KEYFIELD_DL_MAC2].mask_range.u32 = 0;
+#endif
         /* ip src */
         acl_entry->field[ACL_KEYFIELD_IP_SRC].value.u32
             = MINIFLOW_GET_BE32(&rule->flow.mf, nw_src);
@@ -5362,12 +5420,16 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
         /* l4 src port */
         acl_entry->field[ACL_KEYFIELD_PORT_SRC].value.u16
             = MINIFLOW_GET_BE16(&rule->flow.mf, tp_src);
-        acl_entry->field[ACL_KEYFIELD_PORT_SRC].mask_range.u16 = 0xffff;
+        acl_entry->field[ACL_KEYFIELD_PORT_SRC].mask_range.u16
+            = MINIFLOW_GET_BE16(&rule->mask->mf, tp_src);
 
         /* l4 dst port */
         acl_entry->field[ACL_KEYFIELD_PORT_DST].value.u16
             = MINIFLOW_GET_BE16(&rule->flow.mf, tp_dst);
-        acl_entry->field[ACL_KEYFIELD_PORT_DST].mask_range.u16 = 0xffff;
+        acl_entry->field[ACL_KEYFIELD_PORT_DST].mask_range.u16
+            = MINIFLOW_GET_BE16(&rule->mask->mf, tp_dst);
+        //VLOG_INFO("tp_src %x tp_dst %x", acl_entry->field[ACL_KEYFIELD_PORT_SRC].value.u16,
+        //          acl_entry->field[ACL_KEYFIELD_PORT_DST].mask_range.u16);
 
         acl_entry->data.priority = 1;
         acl_entry->data.category_mask = 0x1;
@@ -5538,22 +5600,20 @@ acl_lookup(struct dpcls *cls, const struct netdev_flow_key *mask)
      if (acl_cache->built[cur]) {
         struct acl_search_key key;
         key.ip_proto = MINIFLOW_GET_U8(&mask->mf, nw_proto);
-
         ovs_be64 tun_id = MINIFLOW_GET_BE64(&mask->mf, tunnel.tun_id);
         tun_id = ntohll(tun_id);
         key.tun_id = (uint32_t)(tun_id & 0xffffffff);
         key.tun_id_ = (uint16_t)((tun_id >> 32) & 0xffff);
 
         key.dl_type = ntohs(MINIFLOW_GET_BE16(&mask->mf, dl_type));
-
+#if 0
         ovs_u128 macs = MINIFLOW_GET_U128(&mask->mf, dl_dst);
         memcpy(&key.macs, &macs, sizeof key.macs);
-
+#endif
         key.ip_src = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_src));
         key.ip_dst = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_dst));
         key.port_src = ntohs(MINIFLOW_GET_BE16(&mask->mf, tp_src));
         key.port_dst = ntohs(MINIFLOW_GET_BE16(&mask->mf, tp_dst));
-
         uint8_t *data[1];
         uint32_t result;
         data[0] = &key;
@@ -5584,22 +5644,20 @@ static int acl_lookup_batch(struct dpcls *cls, const struct netdev_flow_key mask
             struct acl_search_key key;
             struct netdev_flow_key *mask = &masks[i];
             key.ip_proto = MINIFLOW_GET_U8(&mask->mf, nw_proto);
-
             ovs_be64 tun_id = MINIFLOW_GET_BE64(&mask->mf, tunnel.tun_id);
             tun_id = ntohll(tun_id);
             key.tun_id = (uint32_t)(tun_id & 0xffffffff);
             key.tun_id_ = (uint16_t)((tun_id >> 32) & 0xffff);
 
             key.dl_type = ntohs(MINIFLOW_GET_BE16(&mask->mf, dl_type));
-
+#if 0
             ovs_u128 macs = MINIFLOW_GET_U128(&mask->mf, dl_dst);
             memcpy(&key.macs, &macs, sizeof key.macs);
-
+#endif
             key.ip_src = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_src));
             key.ip_dst = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_dst));
             key.port_src = ntohs(MINIFLOW_GET_BE16(&mask->mf, tp_src));
             key.port_dst = ntohs(MINIFLOW_GET_BE16(&mask->mf, tp_dst));
-
             keys[i] = key;
             data[i] = &keys[i];
         }
