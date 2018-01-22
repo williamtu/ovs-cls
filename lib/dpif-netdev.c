@@ -5174,6 +5174,7 @@ enum {
     ACL_KEYFIELD_TNL_ID_,
     ACL_KEYFIELD_DL_TYPE,
 //    ACL_KEYFIELD_DL_MAC0,
+//    ACL_KEYFIELD_DL_MAC0,
 //    ACL_KEYFIELD_DL_MAC1,
 //    ACL_KEYFIELD_DL_MAC2,
     ACL_KEYFIELD_IP_SRC,
@@ -6793,6 +6794,7 @@ dpcls_lookup(struct dpcls *cls, const struct netdev_flow_key keys[],
 
     int lookups_match = 0, subtable_pos = 1;
 
+    /*
     for (int i = 0; i < cnt; i++) {
         int index = acl_lookup(cls, &keys[i]);
         if (index != 0 && acl_cache->rules[index] != NULL) {
@@ -6801,8 +6803,8 @@ dpcls_lookup(struct dpcls *cls, const struct netdev_flow_key keys[],
         }
     }
     if (num_lookups_p) *num_lookups_p = lookups_match;
+    */
 
-    /*
     int results[cnt];
     memset(results, 0, sizeof results);
     int ret = acl_lookup_batch(cls, keys, results, cnt);
@@ -6814,7 +6816,6 @@ dpcls_lookup(struct dpcls *cls, const struct netdev_flow_key keys[],
         }
     }
     if (num_lookups_p) *num_lookups_p = lookups_match;
-    */
 
     VLOG_INFO("%s lookup match %d cnt %lu\n", __func__, lookups_match, cnt);
     return (lookups_match == cnt);
