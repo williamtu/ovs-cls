@@ -5320,22 +5320,27 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
             = MINIFLOW_GET_U8(&rule->mask->mf, nw_proto);
 
         ovs_be64 tun_id = MINIFLOW_GET_BE64(&rule->flow.mf, tunnel.tun_id);
-        tun_id = ntohll(tun_id);
+        //tun_id = ntohll(tun_id);
+        ovs_be64 tun_id_mask = MINIFLOW_GET_BE64(&rule->mask->mf, tunnel.tun_id);
+        //tun_id_mask = ntohll(tun_id_mask);
 
         /* tun_id least 32 bits */
         acl_entry->field[ACL_KEYFIELD_TNL_ID].value.u32
             = (uint32_t)(tun_id & 0xffffffff);
-        acl_entry->field[ACL_KEYFIELD_TNL_ID].mask_range.u32 = 0;
+        acl_entry->field[ACL_KEYFIELD_TNL_ID].mask_range.u32
+            = (uint32_t)(tun_id_mask & 0xffffffff);
 
         /* tun_id next 16 bits */
         acl_entry->field[ACL_KEYFIELD_TNL_ID_].value.u16
             = (uint16_t)((tun_id >> 32) & 0xffff);
-        acl_entry->field[ACL_KEYFIELD_TNL_ID_].mask_range.u16 = 0;
+        acl_entry->field[ACL_KEYFIELD_TNL_ID_].mask_range.u16
+            = (uint16_t)((tun_id_mask >> 32) & 0xffff);
 
         /* dl type */
         acl_entry->field[ACL_KEYFIELD_DL_TYPE].value.u16
             = MINIFLOW_GET_BE16(&rule->flow.mf, dl_type);
-        acl_entry->field[ACL_KEYFIELD_DL_TYPE].mask_range.u16 = 0;
+        acl_entry->field[ACL_KEYFIELD_DL_TYPE].mask_range.u16
+            = MINIFLOW_GET_BE16(&rule->mask->mf, dl_type);
 
         ovs_u128 macs = MINIFLOW_GET_U128(&rule->flow.mf, dl_dst);
         uint8_t *pmacs = (uint8_t *)&macs;
