@@ -5173,10 +5173,9 @@ enum {
     ACL_KEYFIELD_TNL_ID,
     ACL_KEYFIELD_TNL_ID_,
     ACL_KEYFIELD_DL_TYPE,
-//    ACL_KEYFIELD_DL_MAC0,
-//    ACL_KEYFIELD_DL_MAC0,
-//    ACL_KEYFIELD_DL_MAC1,
-//    ACL_KEYFIELD_DL_MAC2,
+    ACL_KEYFIELD_DL_MAC0,
+    ACL_KEYFIELD_DL_MAC1,
+    ACL_KEYFIELD_DL_MAC2,
     ACL_KEYFIELD_IP_SRC,
     ACL_KEYFIELD_IP_DST,
     ACL_KEYFIELD_PORT_SRC,
@@ -5189,7 +5188,9 @@ struct acl_search_key {
     uint32_t tun_id;
     uint16_t tun_id_;
     uint16_t dl_type;
-    //uint32_t macs[3];
+    uint32_t mac0;
+    uint32_t mac1;
+    uint32_t mac2;
     uint32_t ip_src;
     uint32_t ip_dst;
     uint16_t port_src;
@@ -5204,7 +5205,6 @@ static struct rte_acl_field_def rule_defs[ACL_KEYFIELD_MAX] = {
         .input_index = 0,
         .offset = offsetof(struct acl_search_key, ip_proto),
     },
-#if 1
     {   /* tunnel id part 1. */
         .type = RTE_ACL_FIELD_TYPE_BITMASK,
         .size = sizeof(uint32_t),
@@ -5227,82 +5227,29 @@ static struct rte_acl_field_def rule_defs[ACL_KEYFIELD_MAX] = {
         .offset = offsetof(struct acl_search_key, dl_type),
     },
 
-    {   /* IP src. */
-        .type = RTE_ACL_FIELD_TYPE_BITMASK,
-        .size = sizeof(uint32_t),
-        .field_index = ACL_KEYFIELD_IP_SRC,
-        .input_index = 3,
-        .offset = offsetof(struct acl_search_key, ip_src),
-    },
-    {   /* IP dst */
-        .type = RTE_ACL_FIELD_TYPE_BITMASK,
-        .size = sizeof(uint32_t),
-        .field_index = ACL_KEYFIELD_IP_DST,
-        .input_index = 4,
-        .offset = offsetof(struct acl_search_key, ip_dst),
-    },
-    {   /* Port Src */
-        .type = RTE_ACL_FIELD_TYPE_BITMASK,
-        .size = sizeof(uint16_t),
-        .field_index = ACL_KEYFIELD_PORT_SRC,
-        /* Port Src and Port Dst will be accomodated into
-         * the same element of the search key. */
-        .input_index = 5,
-        .offset = offsetof(struct acl_search_key, port_src),
-    },
-    {   /* Port Dst */
-        .type = RTE_ACL_FIELD_TYPE_BITMASK,
-        .size = sizeof(uint16_t),
-        .field_index = ACL_KEYFIELD_PORT_DST,
-        /* Port Src and Port Dst will be accomodated into
-         * the same element of the search key. */
-        .input_index = 5,
-        .offset = offsetof(struct acl_search_key, port_dst),
-    },
-#endif
-#if 0
-    {   /* tunnel id part 1. */
-        .type = RTE_ACL_FIELD_TYPE_BITMASK,
-        .size = sizeof(uint32_t),
-        .field_index = ACL_KEYFIELD_TNL_ID,
-        .input_index = 1,
-        .offset = offsetof(struct acl_search_key, tun_id),
-    },
-    {   /* tunnel id part 2. */
-        .type = RTE_ACL_FIELD_TYPE_BITMASK,
-        .size = sizeof(uint16_t),
-        .field_index = ACL_KEYFIELD_TNL_ID_,
-        .input_index = 2,
-        .offset = offsetof(struct acl_search_key, tun_id_),
-    },
-    {   /* dl type. */
-        .type = RTE_ACL_FIELD_TYPE_BITMASK,
-        .size = sizeof(uint16_t),
-        .field_index = ACL_KEYFIELD_DL_TYPE,
-        .input_index = 2,
-        .offset = offsetof(struct acl_search_key, dl_type),
-    },
-    {   /* dl dst first 4 bytes. */
+    {   /* fake mac. */
         .type = RTE_ACL_FIELD_TYPE_BITMASK,
         .size = sizeof(uint32_t),
         .field_index = ACL_KEYFIELD_DL_MAC0,
         .input_index = 3,
-        .offset = offsetof(struct acl_search_key, macs[0]),
+        .offset = offsetof(struct acl_search_key, mac0),
     },
-    {   /* dl dst next 2 bytes and dl src's first 2 bytes. */
+    {   /* fake mac. */
         .type = RTE_ACL_FIELD_TYPE_BITMASK,
         .size = sizeof(uint32_t),
         .field_index = ACL_KEYFIELD_DL_MAC1,
         .input_index = 4,
-        .offset = offsetof(struct acl_search_key, macs[1]),
+        .offset = offsetof(struct acl_search_key, mac1),
     },
-    {   /* dl src next 4 bytes. */
+    {   /* fake mac. */
         .type = RTE_ACL_FIELD_TYPE_BITMASK,
         .size = sizeof(uint32_t),
         .field_index = ACL_KEYFIELD_DL_MAC2,
         .input_index = 5,
-        .offset = offsetof(struct acl_search_key, macs[2]),
+        .offset = offsetof(struct acl_search_key, mac2),
     },
+
+
     {   /* IP src. */
         .type = RTE_ACL_FIELD_TYPE_BITMASK,
         .size = sizeof(uint32_t),
@@ -5318,7 +5265,7 @@ static struct rte_acl_field_def rule_defs[ACL_KEYFIELD_MAX] = {
         .offset = offsetof(struct acl_search_key, ip_dst),
     },
     {   /* Port Src */
-        .type = RTE_ACL_FIELD_TYPE_RANGE,
+        .type = RTE_ACL_FIELD_TYPE_BITMASK,
         .size = sizeof(uint16_t),
         .field_index = ACL_KEYFIELD_PORT_SRC,
         /* Port Src and Port Dst will be accomodated into
@@ -5327,7 +5274,7 @@ static struct rte_acl_field_def rule_defs[ACL_KEYFIELD_MAX] = {
         .offset = offsetof(struct acl_search_key, port_src),
     },
     {   /* Port Dst */
-        .type = RTE_ACL_FIELD_TYPE_RANGE,
+        .type = RTE_ACL_FIELD_TYPE_BITMASK,
         .size = sizeof(uint16_t),
         .field_index = ACL_KEYFIELD_PORT_DST,
         /* Port Src and Port Dst will be accomodated into
@@ -5335,7 +5282,6 @@ static struct rte_acl_field_def rule_defs[ACL_KEYFIELD_MAX] = {
         .input_index = 8,
         .offset = offsetof(struct acl_search_key, port_dst),
     },
-#endif
 };
 
 RTE_ACL_RULE_DEF(ovs_acl_rule, RTE_DIM(rule_defs));
@@ -5365,7 +5311,7 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
 
         //struct rte_acl_rule *acl_entry = &acl_entries[num_rules++];
         struct ovs_acl_rule *acl_entry = &acl_entries[num_rules++];
-	memset(acl_entry, 0, sizeof(*acl_entry));
+        memset(acl_entry, 0, sizeof(*acl_entry));
 
         /* ip proto */
         acl_entry->field[ACL_KEYFIELD_PROTO].value.u8
@@ -5390,7 +5336,7 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
         acl_entry->field[ACL_KEYFIELD_DL_TYPE].value.u16
             = MINIFLOW_GET_BE16(&rule->flow.mf, dl_type);
         acl_entry->field[ACL_KEYFIELD_DL_TYPE].mask_range.u16 = 0;
-#if 0
+
         ovs_u128 macs = MINIFLOW_GET_U128(&rule->flow.mf, dl_dst);
         uint8_t *pmacs = (uint8_t *)&macs;
 
@@ -5404,7 +5350,7 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
         acl_entry->field[ACL_KEYFIELD_DL_MAC2].value.u32
             = *(uint32_t *)(pmacs+8);
         acl_entry->field[ACL_KEYFIELD_DL_MAC2].mask_range.u32 = 0;
-#endif
+
         /* ip src */
         acl_entry->field[ACL_KEYFIELD_IP_SRC].value.u32
             = MINIFLOW_GET_BE32(&rule->flow.mf, nw_src);
@@ -5607,10 +5553,11 @@ acl_lookup(struct dpcls *cls, const struct netdev_flow_key *mask)
         key.tun_id_ = (uint16_t)((tun_id >> 32) & 0xffff);
 
         key.dl_type = ntohs(MINIFLOW_GET_BE16(&mask->mf, dl_type));
-#if 0
         ovs_u128 macs = MINIFLOW_GET_U128(&mask->mf, dl_dst);
-        memcpy(&key.macs, &macs, sizeof key.macs);
-#endif
+        key.mac0 = *(uint32_t *)&(macs);
+        key.mac1 = *((uint32_t *)&macs + 1);
+        key.mac2 = *((uint32_t *)&macs + 2);
+
         key.ip_src = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_src));
         key.ip_dst = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_dst));
         key.port_src = ntohs(MINIFLOW_GET_BE16(&mask->mf, tp_src));
@@ -5651,10 +5598,11 @@ static int acl_lookup_batch(struct dpcls *cls, const struct netdev_flow_key mask
             key.tun_id_ = (uint16_t)((tun_id >> 32) & 0xffff);
 
             key.dl_type = ntohs(MINIFLOW_GET_BE16(&mask->mf, dl_type));
-#if 0
             ovs_u128 macs = MINIFLOW_GET_U128(&mask->mf, dl_dst);
-            memcpy(&key.macs, &macs, sizeof key.macs);
-#endif
+            key.mac0 = *(uint32_t *)&(macs);
+            key.mac1 = *((uint32_t *)&macs + 1);
+            key.mac2 = *((uint32_t *)&macs + 2);
+
             key.ip_src = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_src));
             key.ip_dst = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_dst));
             key.port_src = ntohs(MINIFLOW_GET_BE16(&mask->mf, tp_src));
