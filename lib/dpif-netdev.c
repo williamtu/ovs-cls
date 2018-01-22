@@ -5320,9 +5320,9 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
             = MINIFLOW_GET_U8(&rule->mask->mf, nw_proto);
 
         ovs_be64 tun_id = MINIFLOW_GET_BE64(&rule->flow.mf, tunnel.tun_id);
-        //tun_id = ntohll(tun_id);
+        tun_id = ntohll(tun_id);
         ovs_be64 tun_id_mask = MINIFLOW_GET_BE64(&rule->mask->mf, tunnel.tun_id);
-        //tun_id_mask = ntohll(tun_id_mask);
+        tun_id_mask = ntohll(tun_id_mask);
 
         /* tun_id least 32 bits */
         acl_entry->field[ACL_KEYFIELD_TNL_ID].value.u32
@@ -5338,48 +5338,53 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
 
         /* dl type */
         acl_entry->field[ACL_KEYFIELD_DL_TYPE].value.u16
-            = MINIFLOW_GET_BE16(&rule->flow.mf, dl_type);
+            = ntohs(MINIFLOW_GET_BE16(&rule->flow.mf, dl_type));
         acl_entry->field[ACL_KEYFIELD_DL_TYPE].mask_range.u16
-            = MINIFLOW_GET_BE16(&rule->mask->mf, dl_type);
+            = ntohs(MINIFLOW_GET_BE16(&rule->mask->mf, dl_type));
 
         ovs_u128 macs = MINIFLOW_GET_U128(&rule->flow.mf, dl_dst);
         uint8_t *pmacs = (uint8_t *)&macs;
+        ovs_u128 macs_mask = MINIFLOW_GET_U128(&rule->mask->mf, dl_dst);
+        uint8_t *pmacs_mask = (uint8_t *)&macs_mask;
 
         /* macs */
         acl_entry->field[ACL_KEYFIELD_DL_MAC0].value.u32
-            = *(uint32_t *)pmacs;
-        acl_entry->field[ACL_KEYFIELD_DL_MAC0].mask_range.u32 = 0;
+            = ntohl(*(uint32_t *)pmacs);
+        acl_entry->field[ACL_KEYFIELD_DL_MAC0].mask_range.u32
+            = ntohl(*(uint32_t *)pmacs_mask);
         acl_entry->field[ACL_KEYFIELD_DL_MAC1].value.u32
-            = *(uint32_t *)(pmacs+4);
-        acl_entry->field[ACL_KEYFIELD_DL_MAC1].mask_range.u32 = 0;
+            = ntohl(*(uint32_t *)(pmacs+4));
+        acl_entry->field[ACL_KEYFIELD_DL_MAC1].mask_range.u32
+            = ntohl(*(uint32_t *)(pmacs_mask+4));
         acl_entry->field[ACL_KEYFIELD_DL_MAC2].value.u32
-            = *(uint32_t *)(pmacs+8);
-        acl_entry->field[ACL_KEYFIELD_DL_MAC2].mask_range.u32 = 0;
+            = ntohl(*(uint32_t *)(pmacs+8));
+        acl_entry->field[ACL_KEYFIELD_DL_MAC2].mask_range.u32
+            = ntohl(*(uint32_t *)(pmacs_mask+8));
 
         /* ip src */
         acl_entry->field[ACL_KEYFIELD_IP_SRC].value.u32
-            = MINIFLOW_GET_BE32(&rule->flow.mf, nw_src);
+            = ntohl(MINIFLOW_GET_BE32(&rule->flow.mf, nw_src));
         acl_entry->field[ACL_KEYFIELD_IP_SRC].mask_range.u32
-            = MINIFLOW_GET_BE32(&rule->mask->mf, nw_src);
+            = ntohl(MINIFLOW_GET_BE32(&rule->mask->mf, nw_src));
         //VLOG_INFO("ip mask is %x", acl_entry->field[ACL_KEYFIELD_IP_SRC].mask_range.u32);
 
         /* ip dst */
         acl_entry->field[ACL_KEYFIELD_IP_DST].value.u32
-            = MINIFLOW_GET_BE32(&rule->flow.mf, nw_dst);
+            = ntohl(MINIFLOW_GET_BE32(&rule->flow.mf, nw_dst));
         acl_entry->field[ACL_KEYFIELD_IP_DST].mask_range.u32
-            = MINIFLOW_GET_BE32(&rule->mask->mf, nw_dst);
+            = ntohl(MINIFLOW_GET_BE32(&rule->mask->mf, nw_dst));
 
         /* l4 src port */
         acl_entry->field[ACL_KEYFIELD_PORT_SRC].value.u16
-            = MINIFLOW_GET_BE16(&rule->flow.mf, tp_src);
+            = ntohs(MINIFLOW_GET_BE16(&rule->flow.mf, tp_src));
         acl_entry->field[ACL_KEYFIELD_PORT_SRC].mask_range.u16
-            = MINIFLOW_GET_BE16(&rule->mask->mf, tp_src);
+            = ntohs(MINIFLOW_GET_BE16(&rule->mask->mf, tp_src));
 
         /* l4 dst port */
         acl_entry->field[ACL_KEYFIELD_PORT_DST].value.u16
-            = MINIFLOW_GET_BE16(&rule->flow.mf, tp_dst);
+            = ntohs(MINIFLOW_GET_BE16(&rule->flow.mf, tp_dst));
         acl_entry->field[ACL_KEYFIELD_PORT_DST].mask_range.u16
-            = MINIFLOW_GET_BE16(&rule->mask->mf, tp_dst);
+            = ntohs(MINIFLOW_GET_BE16(&rule->mask->mf, tp_dst));
         //VLOG_INFO("tp_src %x tp_dst %x", acl_entry->field[ACL_KEYFIELD_PORT_SRC].value.u16,
         //          acl_entry->field[ACL_KEYFIELD_PORT_DST].mask_range.u16);
 
@@ -5483,14 +5488,16 @@ acl_init(void)
         ovs_assert(acl_cache->acl_ctx[0] != NULL);
         ret = rte_acl_set_ctx_classify(acl_cache->acl_ctx[0],
                                        RTE_ACL_CLASSIFY_SCALAR);
-	ovs_assert(ret == 0);
+                                       // RTE_ACL_CLASSIFY_SSE);
+        ovs_assert(ret == 0);
 
         acl_param.name = "acl-cache-1";
         acl_cache->acl_ctx[1] = rte_acl_create(&acl_param);
         ovs_assert(acl_cache->acl_ctx[1] != NULL);
         ret = rte_acl_set_ctx_classify(acl_cache->acl_ctx[1],
                                        RTE_ACL_CLASSIFY_SCALAR);
-	ovs_assert(ret == 0);
+                                       // RTE_ACL_CLASSIFY_SSE);
+        ovs_assert(ret == 0);
 
         acl_cache->rules = xmalloc(acl_param.max_rule_num *
                                    sizeof acl_cache->rules[0]);
@@ -5553,20 +5560,19 @@ acl_lookup(struct dpcls *cls, const struct netdev_flow_key *mask)
         struct acl_search_key key;
         key.ip_proto = MINIFLOW_GET_U8(&mask->mf, nw_proto);
         ovs_be64 tun_id = MINIFLOW_GET_BE64(&mask->mf, tunnel.tun_id);
-        tun_id = ntohll(tun_id);
         key.tun_id = (uint32_t)(tun_id & 0xffffffff);
         key.tun_id_ = (uint16_t)((tun_id >> 32) & 0xffff);
 
-        key.dl_type = ntohs(MINIFLOW_GET_BE16(&mask->mf, dl_type));
+        key.dl_type = MINIFLOW_GET_BE16(&mask->mf, dl_type);
         ovs_u128 macs = MINIFLOW_GET_U128(&mask->mf, dl_dst);
         key.mac0 = *(uint32_t *)&(macs);
         key.mac1 = *((uint32_t *)&macs + 1);
         key.mac2 = *((uint32_t *)&macs + 2);
 
-        key.ip_src = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_src));
-        key.ip_dst = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_dst));
-        key.port_src = ntohs(MINIFLOW_GET_BE16(&mask->mf, tp_src));
-        key.port_dst = ntohs(MINIFLOW_GET_BE16(&mask->mf, tp_dst));
+        key.ip_src = MINIFLOW_GET_BE32(&mask->mf, nw_src);
+        key.ip_dst = MINIFLOW_GET_BE32(&mask->mf, nw_dst);
+        key.port_src = MINIFLOW_GET_BE16(&mask->mf, tp_src);
+        key.port_dst = MINIFLOW_GET_BE16(&mask->mf, tp_dst);
         uint8_t *data[1];
         uint32_t result;
         data[0] = &key;
@@ -5598,20 +5604,19 @@ static int acl_lookup_batch(struct dpcls *cls, const struct netdev_flow_key mask
             struct netdev_flow_key *mask = &masks[i];
             key.ip_proto = MINIFLOW_GET_U8(&mask->mf, nw_proto);
             ovs_be64 tun_id = MINIFLOW_GET_BE64(&mask->mf, tunnel.tun_id);
-            tun_id = ntohll(tun_id);
             key.tun_id = (uint32_t)(tun_id & 0xffffffff);
             key.tun_id_ = (uint16_t)((tun_id >> 32) & 0xffff);
 
-            key.dl_type = ntohs(MINIFLOW_GET_BE16(&mask->mf, dl_type));
+            key.dl_type = MINIFLOW_GET_BE16(&mask->mf, dl_type);
             ovs_u128 macs = MINIFLOW_GET_U128(&mask->mf, dl_dst);
             key.mac0 = *(uint32_t *)&(macs);
             key.mac1 = *((uint32_t *)&macs + 1);
             key.mac2 = *((uint32_t *)&macs + 2);
 
-            key.ip_src = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_src));
-            key.ip_dst = ntohl(MINIFLOW_GET_BE32(&mask->mf, nw_dst));
-            key.port_src = ntohs(MINIFLOW_GET_BE16(&mask->mf, tp_src));
-            key.port_dst = ntohs(MINIFLOW_GET_BE16(&mask->mf, tp_dst));
+            key.ip_src = MINIFLOW_GET_BE32(&mask->mf, nw_src);
+            key.ip_dst = MINIFLOW_GET_BE32(&mask->mf, nw_dst);
+            key.port_src = MINIFLOW_GET_BE16(&mask->mf, tp_src);
+            key.port_dst = MINIFLOW_GET_BE16(&mask->mf, tp_dst);
             keys[i] = key;
             data[i] = &keys[i];
         }
