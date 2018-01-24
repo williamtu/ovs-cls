@@ -222,7 +222,7 @@ static void acl_insert(struct dpcls *, struct dpcls_rule *rule,
                        odp_port_t in_port);
 static void acl_remove(struct dpcls *cls, struct dpcls_rule *rule);
 static int acl_lookup_batch(struct dpcls *cls, const struct netdev_flow_key keys[],
-                      int results[], int cnt);
+                      uint32_t results[], uint32_t cnt);
 static int acl_lookup(struct dpcls *cls, const struct netdev_flow_key *mask);
 static inline struct dpcls_subtable *
 dpcls_find_subtable(struct dpcls *cls, const struct netdev_flow_key *mask);
@@ -5184,7 +5184,14 @@ enum {
     ACL_KEYFIELD_MAX
 };
 
-#define ACL_FAKE_FIELD_NUM  24
+// one OpenFlow rule generates around 250 dpcls_rule
+#define ACL_RULE_MAX_NUM 500000
+
+// 0        -> 32
+// 8        => 64
+// 24       -> 128
+// 52(max)  -> ~256
+#define ACL_FAKE_FIELD_NUM  52
 
 struct acl_search_key {
     uint8_t ip_proto;
@@ -5296,9 +5303,12 @@ static struct rte_acl_field_def rule_defs[ACL_KEYFIELD_MAX + ACL_FAKE_FIELD_NUM]
 
 RTE_ACL_RULE_DEF(ovs_acl_rule, RTE_DIM(rule_defs));
 
+static struct ovs_acl_rule acl_entries[ACL_RULE_MAX_NUM];
+
 static int
 acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
 {
+    ovs_assert(acl_cache != NULL);
     if (acl_cache->rules_offset == 0) {
         return 0;
     }
@@ -5306,13 +5316,16 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
     int rules_offset = acl_cache->rules_offset; // TODO atomic?
     VLOG_INFO("rules_offset = %d", rules_offset);
 
-    struct ovs_acl_rule acl_entries[rules_offset];
+    //struct ovs_acl_rule acl_entries[rules_offset];
+    //struct ovs_acl_rule *acl_entries = malloc(rules_offset * sizeof(acl_entries[0]));
+    //ovs_assert(acl_entries != NULL);
    //struct ovs_acl_rule acl_entries[256];
     int num_rules = 0;
     
-    memset(acl_entries, 0, sizeof(acl_entries));
+    memset(acl_entries, 0, sizeof(acl_entries[0]) * rules_offset);
 
     for (int i = 1; i <= rules_offset; i++) {
+        ovs_assert(acl_cache != NULL);
     //for (int i = 0; i < rules_offset; i++) {
         struct dpcls_rule *rule = acl_cache->rules[i];
         if (rule == NULL) continue;
@@ -5321,7 +5334,6 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
 
         //struct rte_acl_rule *acl_entry = &acl_entries[num_rules++];
         struct ovs_acl_rule *acl_entry = &acl_entries[num_rules++];
-        memset(acl_entry, 0, sizeof(*acl_entry));
 
         /* ip proto */
         acl_entry->field[ACL_KEYFIELD_PROTO].value.u8
@@ -5421,6 +5433,8 @@ acl_populate_rules(struct acl_cache *acl_cache, struct rte_acl_ctx *ctx)
         ovs_assert(ret == 0);
     }
 
+    //free(acl_entries);
+
     VLOG_INFO("rte_acl_add_rules done");
     return num_rules;
 }
@@ -5441,7 +5455,7 @@ acl_build_thread(void *acl_cache_)
         uint64_t request_seq = seq_read(acl_cache->request);
 
         VLOG_INFO("got build request, going to build in 5 seconds..");
-        sleep(5);
+        sleep(2);
         VLOG_INFO("start build acl"); 
 
         uint8_t cur;
@@ -5452,6 +5466,10 @@ acl_build_thread(void *acl_cache_)
 
             next = !cur;
             ctx = acl_cache->acl_ctx[next];
+
+            ovs_assert(acl_cache != NULL);
+
+            uint64_t build_start_time = time_msec();
 
             ovs_mutex_lock(&acl_cache_lock);
             int num_rules = acl_populate_rules(acl_cache, ctx);
@@ -5468,16 +5486,25 @@ acl_build_thread(void *acl_cache_)
                 VLOG_INFO("%s build %d", __func__, next);
                 atomic_store(&acl_cache->cur, next);
 
-		int last_off = acl_cache->rules_offset;
-		struct dpcls_rule *last = acl_cache->rules[last_off];
-		if (last != NULL) {
-			VLOG_INFO("validating build..");
-			int results[1];
-			results[0] = 0;
-			ret = acl_lookup_batch(NULL, &last->flow, results, 1);
-			ovs_assert(ret == 0 && results[0] == last_off);
-			VLOG_INFO("validating build.. ok");
-		}
+                uint64_t build_end_time = time_msec();
+                VLOG_INFO("ACL rebuild time %lds %ldms, rule num = %d",
+                          (build_end_time-build_start_time)/1000,
+                          (build_end_time-build_start_time),
+                          num_rules);
+
+#if 0
+                /* validate build is correct */
+                int last_off = acl_cache->rules_offset;
+                struct dpcls_rule *last = acl_cache->rules[last_off];
+                if (last != NULL) {
+                    VLOG_INFO("validating build..");
+                    int results[1];
+                    results[0] = 0;
+                    ret = acl_lookup_batch(NULL, &last->flow, results, 1);
+                    ovs_assert(ret == 0 && results[0] == last_off);
+                    VLOG_INFO("validating build.. ok");
+                }
+#endif
 
             } else {
                 next = !next;
@@ -5501,7 +5528,7 @@ acl_init(void)
         acl_param.socket_id = SOCKET_ID_ANY;
         //acl_param.rule_size = RTE_ACL_RULE_SZ(ARRAY_SIZE(rule_defs));
         acl_param.rule_size = RTE_ACL_RULE_SZ(RTE_DIM(rule_defs));
-        acl_param.max_rule_num = 8000;
+        acl_param.max_rule_num = ACL_RULE_MAX_NUM;
 
         // create field defs for fake fields
         struct rte_acl_field_def *last_valid_def = &rule_defs[ACL_KEYFIELD_MAX - 1];
@@ -5520,20 +5547,21 @@ acl_init(void)
         acl_cache->acl_ctx[0] = rte_acl_create(&acl_param);
         ovs_assert(acl_cache->acl_ctx[0] != NULL);
         ret = rte_acl_set_ctx_classify(acl_cache->acl_ctx[0],
-                                       RTE_ACL_CLASSIFY_SCALAR);
-                                       // RTE_ACL_CLASSIFY_SSE);
+                                       //RTE_ACL_CLASSIFY_SCALAR);
+                                        RTE_ACL_CLASSIFY_SSE);
         ovs_assert(ret == 0);
 
         acl_param.name = "acl-cache-1";
         acl_cache->acl_ctx[1] = rte_acl_create(&acl_param);
         ovs_assert(acl_cache->acl_ctx[1] != NULL);
         ret = rte_acl_set_ctx_classify(acl_cache->acl_ctx[1],
-                                       RTE_ACL_CLASSIFY_SCALAR);
-                                       // RTE_ACL_CLASSIFY_SSE);
+                                       //RTE_ACL_CLASSIFY_SCALAR);
+                                        RTE_ACL_CLASSIFY_SSE);
         ovs_assert(ret == 0);
 
         acl_cache->rules = xmalloc(acl_param.max_rule_num *
                                    sizeof acl_cache->rules[0]);
+        ovs_assert(acl_cache->rules != NULL);
 
         acl_cache->request = seq_create();
         acl_cache->thread = ovs_thread_create("acl_build",
@@ -5543,7 +5571,7 @@ acl_init(void)
 }
 
 static void
-acl_insert(struct dpcls *cls, struct dpcls_rule *rule,
+acl_insert(struct dpcls *cls OVS_UNUSED, struct dpcls_rule *rule,
            const struct netdev_flow_key *mask,
            odp_port_t in_port)
 {
@@ -5552,8 +5580,11 @@ acl_insert(struct dpcls *cls, struct dpcls_rule *rule,
     VLOG_INFO("in %s, proto = %d in_port = %d\n", __func__,
         MINIFLOW_GET_U8(&rule->flow.mf, nw_proto), in_port);
 
+    int free_offset = -1;
+
     for (int i = 0; i < acl_cache->rules_offset; i++) {
         if (acl_cache->rules[i] == rule) return;
+        if (free_offset == -1 && acl_cache->rules[i] == NULL) free_offset = i;
     }
 
     /*
@@ -5564,7 +5595,11 @@ acl_insert(struct dpcls *cls, struct dpcls_rule *rule,
     */
 
     // TODO exceeds array size
-    acl_cache->rules[++acl_cache->rules_offset] = rule;
+    if (free_offset != -1) {
+        acl_cache->rules[free_offset] = rule;
+    } else {
+        acl_cache->rules[++acl_cache->rules_offset] = rule;
+    }
     seq_change(acl_cache->request);
 }
 
@@ -5622,8 +5657,9 @@ acl_lookup(struct dpcls *cls, const struct netdev_flow_key *mask)
      return 0;
 }
 
-static int acl_lookup_batch(struct dpcls *cls, const struct netdev_flow_key masks[],
-                      int results[], int cnt)
+static int acl_lookup_batch(struct dpcls *cls OVS_UNUSED,
+                            const struct netdev_flow_key masks[],
+                            uint32_t results[], uint32_t cnt)
 {
     acl_init();
 
@@ -5661,7 +5697,7 @@ static int acl_lookup_batch(struct dpcls *cls, const struct netdev_flow_key mask
         }
 
         struct rte_acl_ctx *ctx = acl_cache->acl_ctx[cur];
-        int ret = rte_acl_classify(ctx, data, results, cnt, 1);
+        int ret = rte_acl_classify(ctx, (uint8_t **)data, results, cnt, 1);
         if (ret != 0) {
             VLOG_INFO("rte_acl_classify(%d) returns %d", cur, ret);
         }
