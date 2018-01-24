@@ -5184,14 +5184,21 @@ enum {
     ACL_KEYFIELD_MAX
 };
 
-// one OpenFlow rule generates around 250 dpcls_rule
+/* one OpenFlow rule generates around 250 dpcls_rule */
 #define ACL_RULE_MAX_NUM 500000
 
-// 0        -> 32
-// 8        => 64
-// 24       -> 128
-// 52(max)  -> ~256
-#define ACL_FAKE_FIELD_NUM  52
+/*
+ 0        -> 32
+ 8        => 64
+ 24       -> 128
+ 52(max)  -> ~256
+*/
+#define ACL_FAKE_FIELD_NUM  0
+
+/* out of 100 */
+#define ACL_LOOKUP_MISS_RATE    0
+
+static uint32_t acl_lookup_count = 0;
 
 struct acl_search_key {
     uint8_t ip_proto;
@@ -6842,17 +6849,25 @@ dpcls_lookup(struct dpcls *cls, const struct netdev_flow_key keys[],
     memset(results, 0, sizeof results);
     int ret = acl_lookup_batch(cls, keys, results, cnt);
     for (int i = 0; i < cnt; i++) {
+        /* inject miss */
+        if ((++acl_lookup_count % 100) < ACL_LOOKUP_MISS_RATE) {
+            continue;
+        }
         int index = results[i];
         if (index != 0 && acl_cache->rules[index] != NULL) {
             rules[i] = acl_cache->rules[index];
             lookups_match++;
+            ULLONG_SET0(keys_map, i);
         }
     }
-    if (num_lookups_p) *num_lookups_p = lookups_match;
+    VLOG_DBG("%s lookup match %d cnt %lu\n", __func__, lookups_match, cnt);
+    if (!keys_map) {
+        if (num_lookups_p) {
+            *num_lookups_p = lookups_match;
+        }
+        return true;
+    }
 
-    VLOG_INFO("%s lookup match %d cnt %lu\n", __func__, lookups_match, cnt);
-    return (lookups_match == cnt);
-	
     /* The Datapath classifier - aka dpcls - is composed of subtables.
      * Subtables are dynamically created as needed when new rules are inserted.
      * Each subtable collects rules with matches on a specific subset of packet
